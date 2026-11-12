@@ -194,3 +194,48 @@ test("no Upstash configured: limits are kept in memory (one process), so local r
   for (let i = 0; i < LIMITS.perIpPer10Min; i++) assert.equal((await run(chat(ask, { ip: "192.0.2.1" }), env)).res.status, 200);
   assert.equal((await run(chat(ask, { ip: "192.0.2.1" }), env)).res.status, 429);
 });
+
+// Caliper's audits: a request with x-caliper-run AND the right x-caliper-token skips the per-IP
+// limits (an audit is several requests from one machine), but still counts toward the whole
+// demo's daily cap. Anything less is limited exactly like any visitor.
+const audit = (id, token = CALIPER) => ({ headers: { "x-caliper-run": id, "x-caliper-token": token } });
+const fillIp = async (ip) => {
+  for (let i = 0; i < LIMITS.perIpPer10Min; i++) assert.equal((await run(chat(ask, { ip }))).res.status, 200, `visitor request ${i + 1}`);
+};
+
+test("audit: a valid Caliper token gets through at the per-IP limit", async () => {
+  await fillIp("203.0.113.50");
+  assert.equal((await run(chat(ask, { ip: "203.0.113.50" }))).res.status, 429, "a visitor is over the limit");
+  const { res, text } = await run(chat(ask, { ip: "203.0.113.50", ...audit("run_audit1") }));
+  assert.equal(res.status, 200, text);
+  assert.equal(text, "Hello from the model.");
+});
+
+test("audit: a wrong token, or x-caliper-run without a token, is limited like any visitor", async () => {
+  await fillIp("203.0.113.51");
+  for (const [what, headers] of [
+    ["wrong token", audit("run_wrong", "not-the-token").headers],
+    ["no token", { "x-caliper-run": "run_none" }],
+    ["token without x-caliper-run", { "x-caliper-token": CALIPER }],
+  ]) {
+    const { res } = await run(chat(ask, { ip: "203.0.113.51", headers }));
+    assert.equal(res.status, 429, what);
+  }
+});
+
+test("audit: still counts toward the whole demo's daily cap, and is refused once it's reached", async () => {
+  const [ip10m, ipDay, all] = (await import("../lib/ratelimit.js")).windowKeys("203.0.113.52", Date.now());
+  assert.equal((await run(chat(ask, { ip: "203.0.113.52", ...audit("run_count") }))).res.status, 200);
+  assert.equal(redis.data.get(all.key), "1", "counted toward the daily cap");
+  assert.equal(redis.data.has(ip10m.key) || redis.data.has(ipDay.key), false, "not toward the per-IP counters");
+  redis.data.set(all.key, String(LIMITS.allPerDay));
+  const { res, text } = await run(chat(ask, { ip: "203.0.113.52", ...audit("run_capped") }));
+  assert.equal(res.status, 429);
+  assert.match(JSON.parse(text).error, /daily limit/);
+});
+
+test("audit without CALIPER_TOKEN set on the server: no exception, limited like any visitor", async () => {
+  const env = { ...ENV, CALIPER_TOKEN: undefined };
+  await fillIp("203.0.113.53");
+  assert.equal((await run(chat(ask, { ip: "203.0.113.53", ...audit("run_off") }), env)).res.status, 429);
+});

@@ -15,7 +15,7 @@ A small streaming chat, built to be measured by [Caliper](https://github.com/Jia
 | Conversation sent | at most 6 messages, 500 characters each, 16 KB in all |
 | Model reply | at most 300 tokens (`max_tokens`) |
 
-Counters live in Upstash Redis: one per window, `INCR` and `EXPIRE` in one `/multi-exec` transaction (6 commands per chat request). Over a limit: `429` with `Retry-After`, and no model call. If Upstash can't be reached, requests are refused (`503`), never let through. Without Upstash env vars (local runs), counters are kept in memory. The client IP is `x-real-ip`, else the first `x-forwarded-for` entry. A Caliper audit with `--runs 2 --server-runs 1` uses 3 chat requests.
+Counters live in Upstash Redis: one per window, `INCR` and `EXPIRE` in one `/multi-exec` transaction (6 commands per chat request). Over a limit: `429` with `Retry-After`, and no model call. If Upstash can't be reached, requests are refused (`503`), never let through. Without Upstash env vars (local runs), counters are kept in memory. The client IP is `x-real-ip`, else the first `x-forwarded-for` entry. A Caliper audit with `--runs 2 --server-runs 1` uses 3 chat requests. **Caliper's audits skip the per-IP limits:** a request with `x-caliper-run` and the right `x-caliper-token` (checked by `caliper-timings`, in constant time) only counts toward the whole demo's daily cap, so an audit from one machine isn't refused as too many requests. A wrong token, a missing one, or `x-caliper-token` without `x-caliper-run` is limited like any visitor. The model's own limits still apply: Gemini answers its free tier's per-minute limit with an error, which the demo turns into `502`.
 
 The model key is only read on the server (`MODEL_API_KEY`, never a `NEXT_PUBLIC_` variable), sent only to the model as a bearer token, and never in a response: a model error answers `502` with a fixed message.
 
@@ -59,6 +59,7 @@ CALIPER_TOKEN=local-demo-token node dist/cli.js audit http://localhost:3000/ \
 - a model error answers 502 without its message or the key;
 - the fake model works without a key;
 - memory limits apply without Upstash.
+- a valid Caliper token gets through at the per-IP limit, while a wrong or missing token gets 429; an audit still counts toward, and is refused at, the daily cap.
 
 Each guard was checked by breaking it: a copy of the messages going to the model, limits failing open, no limit check, client system messages allowed.
 
