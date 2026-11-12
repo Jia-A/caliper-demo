@@ -46,6 +46,7 @@ export default function Page() {
     <main style={{ maxWidth: 640, margin: "0 auto", padding: "32px 16px" }}>
       <h1 style={{ fontSize: 24 }}>Caliper demo</h1>
       <p style={{ color: "#555" }}>Ask about Caliper. Replies are short, and there&apos;s a small limit per visitor.</p>
+      <p style={{ color: "#555" }}>Demo runs on a free model tier — don&apos;t type anything private.</p>
       <ol style={{ paddingLeft: 20 }}>
         {history.map((m, i) => (
           <li key={i} style={{ margin: "8px 0", color: m.role === "user" ? "#111" : "#333" }}>
