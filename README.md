@@ -2,7 +2,7 @@
 
 A small streaming chat, built to be measured by [Caliper](https://github.com/Jia-A/caliper) and to show what it sees. Next.js App Router, plain JavaScript, no dependencies beyond Next.js, React and `caliper-timings`.
 
-- `POST /api/chat`: checks the input and the rate limits, sends the conversation to the model, and streams the reply back as plain text. The same `messages` array goes to the model and to `caliper-timings`' `run.prompt()`, which records sizes only, never text. The system prompt's two parts (`persona`, `rules`) are named.
+- `POST /api/chat`: checks the input and the rate limits, sends the conversation to the model, and streams the reply back as plain text. The same `messages` array goes to the model and to `caliper-timings`' `run.prompt()`, which records sizes only, never text. The system prompt's two parts (`persona`, `rules`) are named and labelled `source: "app"`; each visitor message is a `visitor` part and each earlier reply an `earlier_reply` part, both labelled `"user"`: the browser sends the replies back, so only this visitor, directly or through the model's replies to them, could have put anything in them. Labels are recorded from caliper-timings 0.6.0 on; older versions ignore them.
 - `GET /__caliper/timings/:id`: Caliper's endpoint, from the folder `app/%5F_caliper/timings/[id]` (a `_` folder is private in the App Router; `%5F` is an encoded `_`). Without `CALIPER_TOKEN` it answers 404 like any unknown route.
 
 ## Limits (`lib/limits.js`)

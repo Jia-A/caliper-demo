@@ -112,8 +112,17 @@ test("the very same messages array goes to the model and to run.prompt, with the
   assert.equal(prompt.mock.callCount(), 1);
   assert.equal(prompt.mock.calls[0].arguments[0], sent, "the same array object");
   const { parts } = prompt.mock.calls[0].arguments[1];
-  assert.deepEqual(parts.map((p) => [p.message, p.name]), [[0, "persona"], [0, "rules"]]);
-  for (const p of parts) assert.ok(sent[0].content.includes(p.text));
+  assert.deepEqual(parts.map((p) => [p.message, p.name, p.source]), [[0, "persona", "app"], [0, "rules", "app"], [1, "visitor", "user"]]);
+  for (const p of parts) assert.ok(sent[p.message].content.includes(p.text));
+});
+
+test("source: each visitor message and each earlier reply the browser sends back is the user's, whole", async (t) => {
+  const prompt = t.mock.method(CaliperRun.prototype, "prompt");
+  const history = [{ role: "user", content: "first" }, { role: "assistant", content: "a reply" }, { role: "user", content: "second" }];
+  await run(chat(history, { headers: { "x-caliper-run": "run_src", "x-caliper-token": CALIPER } }), ENV);
+  const [messages, { parts }] = prompt.mock.calls[0].arguments;
+  assert.deepEqual(parts.map((p) => [p.message, p.name, p.source]), [[0, "persona", "app"], [0, "rules", "app"], [1, "visitor", "user"], [2, "earlier_reply", "user"], [3, "visitor", "user"]]);
+  for (const p of parts.filter((q) => q.source === "user")) assert.equal(p.text, messages[p.message].content);
 });
 
 test("a marked request: the record has the marks, prompt sizes and parts, and never the text", async () => {
