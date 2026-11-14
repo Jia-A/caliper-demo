@@ -1,0 +1,438 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Caliper — time to first painted output</title>
+<style>
+:root {
+  color-scheme: light;
+  --page: #f9f9f7; --surface: #fcfcfb; --ink: #0b0b0b; --ink-2: #52514e; --muted: #898781;
+  --grid: #e1e0d9; --axis: #c3c2b7; --border: rgba(11,11,11,0.10);
+  --seg-click: #eda100; --seg-preflight: #e87ba4; --seg-connection: #008300; --seg-ttfb: #2a78d6;
+  --seg-download: #1baf7a; --seg-render: #eb6834; --seg-streaming: #e34948; --seg-other: #c3c2b7;
+  --ok: #e1e0d9; --ok-ink: #0b0b0b; --warn: #b93a0b; --warn-ink: #ffffff; --track: #f1f0eb;
+  --src-app: #2a78d6; --src-user: #eda100; --src-outside: #e34948; --src-unknown: #c3c2b7;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --page: #0d0d0d; --surface: #1a1a19; --ink: #f0efec; --ink-2: #c3c2b7; --muted: #898781;
+    --grid: #2c2c2a; --axis: #383835; --border: rgba(255,255,255,0.10);
+    --seg-click: #c98500; --seg-preflight: #d55181; --seg-connection: #008300; --seg-ttfb: #3987e5;
+    --seg-download: #199e70; --seg-render: #d95926; --seg-streaming: #e66767; --seg-other: #52514e;
+    --ok: #383835; --ok-ink: #f0efec; --warn: #f2884f; --warn-ink: #0b0b0b; --track: #141413;
+    --src-app: #3987e5; --src-user: #c98500; --src-outside: #e66767; --src-unknown: #52514e;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--page); color: var(--ink);
+  font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+main { max-width: 1100px; margin: 0 auto; padding: 24px 16px 48px; }
+h1 { font-size: 22px; margin: 0 0 12px; }
+h2 { font-size: 16px; margin: 32px 0 12px; }
+code { font: 13px ui-monospace, SFMono-Regular, Menlo, monospace; }
+.wrap { overflow-wrap: anywhere; }
+.muted { color: var(--muted); }
+.meta { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; margin: 0; }
+.meta dt { color: var(--ink-2); }
+.meta dd { margin: 0; }
+.tiles { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 20px; }
+.tile { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 12px 16px; min-width: 160px; }
+.tile-label { color: var(--ink-2); font-size: 13px; }
+.tile-value { font-size: 28px; font-weight: 600; }
+.tile-value small { font-size: 14px; font-weight: 400; color: var(--ink-2); }
+.legend { list-style: none; padding: 0; margin: 0 0 16px; display: flex; flex-wrap: wrap; gap: 6px 18px; color: var(--ink-2); }
+.legend li { display: flex; align-items: center; gap: 6px; }
+.swatch { width: 12px; height: 12px; border-radius: 3px; flex: none; }
+.chart { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; }
+.row { display: grid; grid-template-columns: 120px 1fr; gap: 12px; }
+.row + .row { margin-top: 12px; }
+.rlabel { padding-top: 2px; color: var(--ink-2); }
+.rlabel b { display: block; color: var(--ink); font-weight: 600; font-variant-numeric: tabular-nums; }
+.tag { font-size: 11px; border: 1px solid var(--axis); border-radius: 999px; padding: 0 6px; margin-left: 4px; }
+.plot { position: relative; min-width: 0; }
+.bar-area { position: relative; }
+.grid { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--grid); }
+.tbar { position: relative; display: flex; gap: 2px; height: 24px; }
+.verdict-box { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 4px 16px 12px; margin-top: 20px; }
+.verdict-box h2 { margin-top: 12px; }
+.headline { font-size: 20px; font-weight: 600; margin: 0 0 8px; }
+.sides { margin: 0; padding-left: 18px; }
+.sides li { margin: 2px 0; }
+.bar-title { color: var(--ink-2); margin: 0 0 6px; }
+.bar { display: grid; gap: 4px; }
+.lane { position: relative; height: 30px; background: var(--track); border: 1px solid var(--border); border-radius: 4px; overflow: hidden; }
+.bseg { position: absolute; top: 0; bottom: 0; min-width: 2px; padding: 0 6px; box-sizing: border-box; display: flex; align-items: center; gap: 4px;
+  font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; border-right: 2px solid var(--surface); }
+.bseg.ok { background: var(--ok); color: var(--ok-ink); }
+.bseg.over { background: repeating-linear-gradient(135deg, var(--warn) 0 8px, color-mix(in srgb, var(--warn) 82%, var(--ink)) 8px 16px); color: var(--warn-ink); font-weight: 600; }
+.bname { overflow: hidden; text-overflow: ellipsis; }
+.bms { font-variant-numeric: tabular-nums; }
+.tag-over { text-transform: uppercase; font-size: 10px; letter-spacing: 0.04em; border: 1px solid currentColor; border-radius: 3px; padding: 0 3px; }
+.barkey { list-style: none; padding: 0; margin: 8px 0 0; display: grid; gap: 2px; font-size: 13px; }
+.barkey li { display: flex; align-items: baseline; gap: 8px; overflow-wrap: anywhere; }
+.barkey .sw { width: 10px; height: 10px; border-radius: 2px; flex: none; background: var(--ok); }
+.barkey .over .sw { background: var(--warn); }
+.barkey .over b { color: var(--warn); }
+details.more { margin-top: 32px; border-top: 1px solid var(--border); padding-top: 12px; }
+details.more > summary { font-size: 16px; font-weight: 600; color: var(--ink); }
+details.more h3 { font-size: 15px; margin: 24px 0 10px; }
+.reqs { list-style: none; padding: 0; margin: 0; display: grid; gap: 8px; font-size: 13px; }
+.reqs li { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; overflow-wrap: anywhere; }
+.reqs .why { display: block; }
+.seg { position: relative; flex: 1 1 0; min-width: 3px; display: flex; align-items: center; justify-content: center; cursor: default; }
+.seg:last-child { border-radius: 0 4px 4px 0; }
+.seg:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+.seg:hover, .seg:focus-visible { filter: brightness(1.08); }
+.in { font-size: 12px; font-weight: 600; white-space: nowrap; font-variant-numeric: tabular-nums; visibility: hidden; padding: 0 4px; }
+.callouts { position: relative; height: 0; }
+.callout { position: absolute; font-size: 12px; color: var(--ink-2); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.leaders { position: absolute; left: 0; top: 0; overflow: visible; }
+.leaders line { stroke: var(--muted); stroke-width: 1; }
+.req { margin: 6px 0 0; font-size: 13px; }
+.method { font-weight: 600; }
+.why { margin: 2px 0 0; font-size: 12px; color: var(--muted); }
+.axis { margin-top: 8px; }
+.axis .plot { height: 16px; }
+.axis span { position: absolute; transform: translateX(-50%); font-size: 12px; color: var(--muted); white-space: nowrap; }
+.axis span:first-child { transform: none; }
+.table-wrap + .table-wrap { margin-top: 12px; }
+tr.part th { padding-left: 1.5em; font-weight: normal; }
+tr.part.note th { color: var(--ink-2); }
+.src { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; }
+.src-app { background: var(--src-app); } .src-user { background: var(--src-user); }
+.src-outside { background: var(--src-outside); } .src-unknown { background: var(--src-unknown); }
+td.source { white-space: nowrap; }
+.legend .src { margin-right: 0; }
+tr.by-source th { font-weight: normal; color: var(--ink-2); }
+.table-wrap { overflow-x: auto; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; }
+table { border-collapse: collapse; width: 100%; font-size: 13px; }
+th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--grid); vertical-align: top; }
+thead th { color: var(--ink-2); font-weight: 600; white-space: normal; }
+tbody tr:last-child > * { border-bottom: 0; }
+.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.note { display: block; white-space: normal; font-size: 12px; }
+.stop { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; }
+.stop p { margin: 0 0 8px; }
+.verdict { font-size: 18px; font-weight: 600; }
+.fix { font-weight: 600; }
+.advice-count { margin: 0.5em 0 0; font-weight: 600; }
+.advice li { margin: 0 0 0.6em; }
+.advice .advice-line { margin: 0; }
+.advice details summary { cursor: pointer; color: var(--muted, inherit); }
+.summary ul { list-style: none; margin: 0; padding: 12px 16px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; }
+.summary li { display: flex; gap: 8px; align-items: baseline; padding: 3px 0; }
+.summary li b { min-width: 96px; }
+.summary .unknown { color: var(--ink-2); }
+.summary .warn .smark { color: var(--seg-click); }
+.smark { width: 1em; flex: none; text-align: center; font-weight: 700; }
+.mark { white-space: nowrap; }
+.verdict-sm { font-weight: 600; margin: 16px 0 8px; }
+.log { margin: 0; font: 12px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
+.log li { white-space: pre-wrap; }
+.group th { color: var(--ink-2); font-weight: 600; background: var(--page); }
+h3 { font-size: 14px; margin: 16px 0 0; }
+details { margin-top: 12px; }
+summary { cursor: pointer; color: var(--ink-2); }
+.notes { margin: 12px 0 0; padding-left: 18px; color: var(--ink-2); }
+#tip { position: fixed; z-index: 10; pointer-events: none; max-width: 320px; background: var(--ink); color: var(--surface);
+  font-size: 12px; padding: 6px 8px; border-radius: 6px; }
+@media (max-width: 640px) {
+  .row { grid-template-columns: 1fr; gap: 4px; }
+  .rlabel b { display: inline; margin-left: 8px; }
+}
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Caliper — time to first painted output</h1>
+    <dl class="meta">
+      <dt>URL</dt><dd class="wrap">https://lets-quill.vercel.app/blog/cmvhv3jo80002f4y47l8p1adb</dd>
+      <dt>Measured button</dt><dd>button <code>/^(re)?generate$/i</code></dd>
+      <dt>Steps</dt><dd><code>share on socials</code></dd>
+      <dt>Output selector</dt><dd><code>textarea</code></dd>
+      <dt>Date</dt><dd>Nov 14, 2026, 1:48:57 PM GMT+5:30</dd>
+      <dt>Runs</dt><dd>2</dd>
+    </dl>
+  </header>
+
+  <section aria-labelledby="verdict-h" class="verdict-box">
+    <h2 id="verdict-h">Verdict</h2>
+    <p class="headline">People waited 1514 ms for the first word in the one warm run.</p>
+    <ul class="sides"><li>In the browser: headers → first paint — 5.8× its limit, in 1 of 1 warm runs.</li><li>Inside the server: postgres — 5.1× its limit, in 1 of 1 marked visits.</li></ul>
+    <p class="advice-count"><a href="#advice-h">2 things to look at ↓</a></p>
+  </section>
+  <section aria-labelledby="advice-h" class="advice">
+    <h2 id="advice-h">Advice</h2>
+    <ul><li id="advice-first-run"><p class="advice-line"><b>The first run (a fresh browser) waited 132 ms longer for the first word than the one warm run (1646 vs 1514 ms).</b></p><details><summary>why</summary><p>CORS preflight: 183 ms on the first run, not in the warm runs (+183 ms, more than its 100 ms limit). Caliper can't tell why from timings alone.</p><p class="muted">Basis: Caliper's own reasoning: each segment's Where-to-look limit, applied to the gap between the first run and the warm runs, from 1 first run and 1 warm run. 100 ms: Nielsen / RAIL: under 100 ms feels instant.</p></details></li><li id="advice-dominant"><p class="advice-line"><b>article is 55% of the prompt (3207 of 5827 bytes, labelled user).</b></p><details><summary>why</summary><p class="muted">Basis: Caliper's own threshold: one named part is 50% or more of the prompt's measured bytes, more than all the rest together. These are bytes your app reported, not tokens; Caliper didn't measure what trimming it would change.</p></details></li></ul>
+  </section>
+
+  <section aria-labelledby="browser-h">
+    <h2 id="browser-h">In the browser</h2>
+    <p class="bar-title">Run 2, the one warm run: 1514 ms from click to first word</p>
+    <div class="bar" role="group" aria-label="Run 2, the one warm run: 1514 ms from click to first word">
+      <div class="lane"><div class="bseg ok" style="left:0.000%;width:0.198%" title="click → request sent: 3 ms"><span class="bname">click → request sent</span> <span class="bms">3 ms</span></div><div class="bseg over" style="left:0.198%;width:61.162%" title="browser: response headers received: 926 ms — over its 600 ms limit"><span class="bname">browser: response headers received</span> <span class="bms">926 ms</span> <span class="tag-over">over</span></div><div class="bseg over" style="left:61.361%;width:38.639%" title="headers → first paint: 585 ms — over its 100 ms limit"><span class="bname">headers → first paint</span> <span class="bms">585 ms</span> <span class="tag-over">over</span></div></div>
+    </div>
+    <ul class="barkey"><li class="ok"><span class="sw"></span><span>click → request sent — 3 ms — within its 200 ms limit</span></li><li class="over"><span class="sw"></span><span>browser: response headers received — 926 ms — <b>over</b> its 600 ms limit</span></li><li class="over"><span class="sw"></span><span>headers → first paint — 585 ms — <b>over</b> its 100 ms limit</span></li></ul>
+    <h3>Where to look — browser</h3><div class="stop"><p class="muted">1 warm run.</p>
+      <p class="verdict-sm">headers → first paint: 585 ms — 5.8× its 100 ms limit, in 1 of 1 warm runs; 39% of the browser total</p>
+      
+      
+      <p class="muted">Limit: Nielsen / RAIL: under 100 ms feels instant. These limits were written for whole pages or interactions; applying them to one part of the wait is Caliper's reasoning.</p>
+      <p>Things to check:</p>
+      <ul class="notes"><li>could be headers sent before the first real chunk, so the wait for the reply shows up here</li><li>could be the client buffering chunks before showing them</li><li>could be a proxy or compression buffering the stream</li><li>could be parsing or rendering each chunk</li></ul>
+      <p>Learn more: <a href="https://developer.mozilla.org/en-US/docs/Web/API/Streams_API" rel="noopener noreferrer">https://developer.mozilla.org/en-US/docs/Web/API/Streams_API</a></p>
+      <p class="muted">Caliper sees timings, not your code — these are common causes, not a diagnosis.</p>
+      <h3>Also over their limits</h3><ul class="notes"><li>browser: response headers received: 926 ms — 1.5× its 600 ms limit, in 1 of 1 warm runs — learn more: <a href="https://web.dev/optimize-ttfb/" rel="noopener noreferrer">https://web.dev/optimize-ttfb/</a></li></ul></div>
+  </section>
+  <section aria-labelledby="server-top-h">
+    <h2 id="server-top-h">Inside the server</h2>
+    <p class="muted">From separate marked runs, on the server's clock. Never added to the browser timings above: different runs, different clocks.</p>
+    <p class="bar-title">Marked visit 1, the one visit: 1046 ms from arrival to server: first bytes sent</p>
+    <div class="bar" role="group" aria-label="Marked visit 1, the one visit: 1046 ms from arrival to server: first bytes sent">
+      <div class="lane"><div class="bseg over" style="left:0.000%;width:48.375%" title="postgres: 506 ms — over its 100 ms limit"><span class="bname">postgres</span> <span class="bms">506 ms</span> <span class="tag-over">over</span></div><div class="bseg over" style="left:48.375%;width:51.625%" title="model call → first bytes sent: 540 ms — over its 450 ms limit"><span class="bname">model call → first bytes sent</span> <span class="bms">540 ms</span> <span class="tag-over">over</span></div></div>
+    </div>
+    <ul class="barkey"><li class="over"><span class="sw"></span><span>postgres — 506 ms — <b>over</b> its 100 ms limit</span></li><li class="over"><span class="sw"></span><span>model call → first bytes sent — 540 ms — <b>over</b> its 450 ms limit</span></li></ul><p class="muted">Empty parts of a row are time no span covers.</p>
+    <h3>Request Map — what's inside each AI request (sizes only)</h3>
+      <h4>Prompt sizes (marked visit 1)</h4>
+      <p class="muted">UTF-8 bytes of each message's text as your app passed it to run.prompt(); not tokens.</p>
+      <p class="muted">Source: who wrote the text, as your app labelled it.</p>
+      <ul class="legend"><li><span class="src src-app"></span>app (your own text)</li><li><span class="src src-user"></span>user (the person using the feature)</li><li><span class="src src-outside"></span>outside (anyone else)</li><li><span class="src src-unknown"></span>unknown (not labelled)</li></ul>
+      <div class="table-wrap">
+      <table>
+        <thead><tr><th scope="col">message</th><th scope="col" class="num">bytes</th><th scope="col">share</th><th scope="col">source</th></tr></thead>
+        <tbody><tr><th scope="row">1 system</th><td class="num">2499</td><td>43%</td><td class="source"></td></tr><tr class="part"><th scope="row">instructions</th><td class="num">2499</td><td></td><td class="source"><span class="src src-app"></span>app <span class="muted">labelled by app</span></td></tr><tr class="part"><th scope="row">rest of message 1</th><td class="num">0</td><td></td><td class="source"><span class="src src-unknown"></span>unknown <span class="muted">not labelled</span></td></tr><tr><th scope="row">2 user</th><td class="num">3328</td><td>57%</td><td class="source"></td></tr><tr class="part"><th scope="row">author</th><td class="num">25</td><td></td><td class="source"><span class="src src-user"></span>user <span class="muted">labelled by app</span></td></tr><tr class="part"><th scope="row">title</th><td class="num">33</td><td></td><td class="source"><span class="src src-user"></span>user <span class="muted">labelled by app</span></td></tr><tr class="part"><th scope="row">code_snippet</th><td class="num">57</td><td></td><td class="source"><span class="src src-app"></span>app <span class="muted">labelled by app</span></td></tr><tr class="part"><th scope="row">article</th><td class="num">3207</td><td></td><td class="source"><span class="src src-user"></span>user <span class="muted">labelled by app</span></td></tr><tr class="part"><th scope="row">rest of message 2</th><td class="num">6</td><td></td><td class="source"><span class="src src-unknown"></span>unknown <span class="muted">not labelled</span></td></tr><tr><th scope="row">total</th><td class="num">5827</td><td></td><td class="source"></td></tr><tr class="by-source"><th scope="row">by source: app</th><td class="num">2556</td><td>44%</td><td class="source"><span class="src src-app"></span>app</td></tr><tr class="by-source"><th scope="row">by source: user</th><td class="num">3265</td><td>56%</td><td class="source"><span class="src src-user"></span>user</td></tr><tr class="by-source"><th scope="row">by source: outside</th><td class="num">0</td><td>0%</td><td class="source"><span class="src src-outside"></span>outside</td></tr><tr class="by-source"><th scope="row">by source: unknown</th><td class="num">6</td><td>0%</td><td class="source"><span class="src src-unknown"></span>unknown</td></tr></tbody>
+      </table>
+      </div>
+      
+    <h3>Where to look — server</h3><div class="stop"><p class="muted">1 marked visit, on the server's clock; never compared with the browser.</p>
+      <p class="verdict-sm">postgres: 506 ms — 5.1× its 100 ms limit, in 1 of 1 marked visits; 48% of the time to server: first bytes sent</p>
+      <p>a step your app named; Caliper can't see inside it.</p>
+      <p>It ended before the model call was sent (postgresEnd 506 ms, model call sent 506 ms), so all 506 ms of it came before the model call.</p>
+      <p class="muted">Limit: Nielsen / RAIL: under 100 ms feels instant. These limits were written for whole pages or interactions; applying them to one part of the wait is Caliper's reasoning.</p>
+      <p>Things to check:</p>
+      <ul class="notes"><li>could be waiting inside this step: network calls, other services, locks</li><li>could be work that runs on every request but could be cached or done earlier</li><li>could be steps running one after another that could run at the same time</li></ul>
+      
+      <p class="muted">Caliper sees timings, not your code — these are common causes, not a diagnosis.</p>
+      <h3>Also over their limits</h3><ul class="notes"><li>model call → first bytes sent: 540 ms — 1.2× its 450 ms limit, in 1 of 1 marked visits</li></ul></div>
+  </section>
+
+  <section aria-labelledby="summary-h" class="summary">
+    <h2 id="summary-h">Checks</h2>
+    <ul>
+      <li class="pass"><span class="smark">✓</span><b>streaming</b> Streams — streaming span 3268 ms (the one warm run).</li><li class="pass"><span class="smark">✓</span><b>stop</b> Stop works (browser side)</li>
+    </ul>
+  </section>
+  <section aria-labelledby="stop-h">
+    <h2 id="stop-h">Stop check</h2>
+    <div class="stop">
+      <p class="muted">Stop button <code>/^stop$/i</code>, one extra run on a fresh page</p>
+      <p class="verdict">Stop works (browser side)</p>
+      
+      <table><tbody>
+        <tr><th scope="row">pixels</th><td><span class="mark">✓ pass</span></td><td class="wrap">output stopped changing 0 ms after Stop</td></tr><tr><th scope="row">network</th><td><span class="mark">✓ pass</span></td><td class="wrap">POST https://quill-backend.example/api/v1/social/cmvhv3jo80002f4y47l8p1adb/generate: aborted by the browser (net::ERR_ABORTED) 15 ms after Stop; 0 bytes after the abort</td></tr><tr><th scope="row">end</th><td><span class="mark">✓ pass</span></td><td class="wrap">no normal end (no requestfinished)</td></tr>
+      </tbody></table>
+      <ul class="notes"><li>clicked Stop 651 ms after the first word, while the output was still changing</li><li>Model-side cancellation (hop 2: your server → the model provider) is not visible from the browser. An abort here only shows the browser dropped its connection; check server logs or provider usage to confirm generation stopped.</li></ul>
+    </div>
+  </section>
+  
+  
+  
+
+  <details class="more">
+    <summary>Details: every run, the data, request matching, server marks</summary>
+    <div class="tiles">
+      <div class="tile"><div class="tile-label">Cold (run 1)</div><div class="tile-value">1,646<small> ms</small></div></div>
+      <div class="tile"><div class="tile-label">The one warm run</div><div class="tile-value">1,514<small> ms</small></div></div>
+      <div class="tile"><div class="tile-label">Worst (all runs)</div><div class="tile-value">1,646<small> ms</small></div></div>
+    </div>
+
+    <section aria-labelledby="timeline-h">
+      <h3 id="timeline-h">Timeline per run</h3>
+      <ul class="legend">
+        <li><span class="swatch" style="background:var(--seg-click)"></span>click → fetch() called / request sent</li><li><span class="swatch" style="background:var(--seg-preflight)"></span>CORS preflight</li><li><span class="swatch" style="background:var(--seg-ttfb)"></span>browser: response headers received</li><li><span class="swatch" style="background:var(--seg-streaming)"></span>headers → first paint (streaming)</li>
+      </ul>
+      <div class="chart">
+        
+      <div class="row">
+        <div class="rlabel">run 1 <span class="tag">cold</span><b>1,646 ms</b></div>
+        <div class="plot">
+          <div class="bar-area">
+            <i class="grid" style="left:0.000%"></i><i class="grid" style="left:30.377%"></i><i class="grid" style="left:60.753%"></i><i class="grid" style="left:91.130%"></i>
+            <div class="tbar" style="width:100.000%">
+              <div class="seg" tabindex="0" style="flex-grow:4.800000011920929;background:var(--seg-click)"
+       data-tip="click → fetch() called: 4.8 ms (0.3% of total)" aria-label="click → fetch() called: 4.8 ms (0.3% of total)"><span class="in">5 ms</span></div><div class="seg" tabindex="0" style="flex-grow:182.7189452946186;background:var(--seg-preflight)"
+       data-tip="CORS preflight: 182.7 ms (11.1% of total)" aria-label="CORS preflight: 182.7 ms (11.1% of total)"><span class="in">183 ms</span></div><div class="seg" tabindex="0" style="flex-grow:1182.39208984375;background:var(--seg-ttfb)"
+       data-tip="browser: response headers received: 1182.4 ms (71.8% of total)" aria-label="browser: response headers received: 1182.4 ms (71.8% of total)"><span class="in">1,182 ms</span></div><div class="seg" tabindex="0" style="flex-grow:276.28896486759186;background:var(--seg-streaming)"
+       data-tip="headers → first paint: 276.3 ms (16.8% of total) — done 5007 ms after paint" aria-label="headers → first paint: 276.3 ms (16.8% of total) — done 5007 ms after paint"><span class="in">276 ms</span></div>
+            </div>
+            <div class="callouts"></div>
+          </div>
+          <p class="req wrap"><span class="method">POST</span> https://quill-backend.example/api/v1/social/cmvhv3jo80002f4y47l8p1adb/generate
+         → 200 · text/event-stream</p>
+       <p class="why">chosen from 9 request(s): explains 84 of 85 output changes (body bytes ≤ 250 ms before each; 1 came before its first body byte), no other request explains any</p>
+       <p class="why">share: 84 of 84 output changes from its first body byte (100%) — the first run asks below 95% (Caliper's own threshold, no outside source)</p>
+        </div>
+      </div>
+      <div class="row">
+        <div class="rlabel">run 2<b>1,514 ms</b></div>
+        <div class="plot">
+          <div class="bar-area">
+            <i class="grid" style="left:0.000%"></i><i class="grid" style="left:30.377%"></i><i class="grid" style="left:60.753%"></i><i class="grid" style="left:91.130%"></i>
+            <div class="tbar" style="width:91.981%">
+              <div class="seg" tabindex="0" style="flex-grow:2.61279296875;background:var(--seg-click)"
+       data-tip="click → request sent: 2.6 ms (0.2% of total)" aria-label="click → request sent: 2.6 ms (0.2% of total)"><span class="in">3 ms</span></div><div class="seg" tabindex="0" style="flex-grow:926.074951171875;background:var(--seg-ttfb)"
+       data-tip="browser: response headers received: 926.1 ms (61.2% of total)" aria-label="browser: response headers received: 926.1 ms (61.2% of total)"><span class="in">926 ms</span></div><div class="seg" tabindex="0" style="flex-grow:585.2122558653355;background:var(--seg-streaming)"
+       data-tip="headers → first paint: 585.2 ms (38.7% of total) — done 3267 ms after paint" aria-label="headers → first paint: 585.2 ms (38.7% of total) — done 3267 ms after paint"><span class="in">585 ms</span></div>
+            </div>
+            <div class="callouts"></div>
+          </div>
+          <p class="req wrap"><span class="method">POST</span> https://quill-backend.example/api/v1/social/cmvhv3jo80002f4y47l8p1adb/generate
+         → 200 · text/event-stream</p>
+       <p class="why">chosen from 8 request(s): explains 67 of 68 output changes (body bytes ≤ 250 ms before each; 1 came before its first body byte), no other request explains any</p>
+       <p class="why">share: 67 of 67 output changes from its first body byte (100%) — the first run asks below 95% (Caliper's own threshold, no outside source)</p>
+        </div>
+      </div>
+        <div class="row axis" aria-hidden="true">
+          <div></div>
+          <div class="plot"><span style="left:0.000%">0</span><span style="left:30.377%">500 ms</span><span style="left:60.753%">1 s</span><span style="left:91.130%">1.5 s</span></div>
+        </div>
+      </div>
+    </section>
+
+    <section aria-labelledby="table-h">
+      <h3 id="table-h">Data</h3>
+      <div class="table-wrap">
+      <table>
+        <thead><tr>
+          <th scope="col">Segment (ms)</th><th scope="col" class="num">run&nbsp;1 (cold)</th><th scope="col" class="num">run&nbsp;2</th>
+        </tr></thead>
+        <tbody>
+          <tr><th scope="row">Total</th><td class="num">1,646</td><td class="num">1,514</td></tr>
+          <tr><th scope="row">click → fetch() called / request sent</th><td class="num">4.8</td><td class="num">2.6</td></tr><tr><th scope="row">CORS preflight</th><td class="num">182.7</td><td class="num muted">—</td></tr><tr><th scope="row">browser: response headers received</th><td class="num">1182.4</td><td class="num">926.1</td></tr><tr><th scope="row">headers → first paint (streaming)</th><td class="num">276.3<span class="note muted">done 5007 ms after paint</span></td><td class="num">585.2<span class="note muted">done 3267 ms after paint</span></td></tr>
+        </tbody>
+      </table>
+      </div>
+    </section>
+
+    <section aria-labelledby="requests-h">
+      <h3 id="requests-h">Request matching and clock check</h3>
+      <ul class="reqs"><li><b>run&nbsp;1 (cold)</b> <span class="wrap">POST https://quill-backend.example/api/v1/social/cmvhv3jo80002f4y47l8p1adb/generate → 200 text/event-stream</span>
+        <span class="why">chosen from 9 request(s): explains 84 of 85 output changes (body bytes ≤ 250 ms before each; 1 came before its first body byte), no other request explains any</span>
+        <span class="why">share: 84 of 84 output changes from its first body byte (100%) — the first run asks below 95% (Caliper's own threshold, no outside source)</span>
+        <span class="why">clock check: response headers within 0.1 ms of Resource Timing</span></li><li><b>run&nbsp;2</b> <span class="wrap">POST https://quill-backend.example/api/v1/social/cmvhv3jo80002f4y47l8p1adb/generate → 200 text/event-stream</span>
+        <span class="why">chosen from 8 request(s): explains 67 of 68 output changes (body bytes ≤ 250 ms before each; 1 came before its first body byte), no other request explains any</span>
+        <span class="why">share: 67 of 67 output changes from its first body byte (100%) — the first run asks below 95% (Caliper's own threshold, no outside source)</span>
+        <span class="why">clock check: response headers within 0.5 ms of Resource Timing</span></li></ul>
+    </section>
+    
+    <section aria-labelledby="server-h">
+    <h3 id="server-h">Inside the server: marks and spans</h3>
+    <div class="stop">
+      <p class="muted">From separate marked runs, on the server's clock. Never added to the browser timings above: different runs, different clocks.</p>
+      <p class="verdict-sm">Inside the server (from 1 of 1 marked run) — ms after the request arrived, status 200</p>
+      <div class="table-wrap">
+      <table>
+        <thead><tr>
+          <th scope="col"></th><th scope="col" class="num">ms</th>
+        </tr></thead>
+        <tbody>
+          <tr class="group"><th scope="rowgroup" colspan="2">Marks</th></tr><tr><th scope="row">postgresStart</th><td class="num">0</td></tr><tr><th scope="row">postgresEnd</th><td class="num">506</td></tr><tr><th scope="row">model call sent</th><td class="num">506</td></tr><tr><th scope="row">server: first bytes sent</th><td class="num">1046</td></tr>
+          <tr class="group"><th scope="rowgroup" colspan="2">Spans</th></tr><tr><th scope="row">postgres<span class="note muted">postgresStart → postgresEnd</span></th><td class="num">506</td></tr><tr><th scope="row">model call → first bytes sent</th><td class="num">540</td></tr>
+        </tbody>
+      </table>
+      </div>
+      <ul class="notes"><li>Workers time waits only — a span with only computation inside (no I/O) can read 0 ms.</li><li>first bytes sent = the server's first write to the browser. If your app writes anything before the model's reply (a heartbeat, an envelope), this is that write.</li></ul>
+      
+      <details><summary>Run details</summary>
+      <ul class="notes log"><li>Server timings — pre-check: feature on, token accepted (expected 400 on the test id caliper.precheck)</li><li>Server timings — marked visit 1 of 1 sent x-caliper-run 94005205-e033-44d7-88fc-46c49ea32482 on POST https://quill-backend.example/api/v1/social/cmvhv3jo80002f4y47l8p1adb/generate (matched POST https://quill-backend.example/api/v1/social/cmvhv3jo80002f4y47l8p1adb/generate)</li></ul>
+      </details>
+    </div>
+  </section>
+  </details>
+</main>
+<div id="tip" role="tooltip" hidden></div>
+<script>
+(() => {
+  const GAP = 8, DROP = 8, ROW = 18, SVG = "http://www.w3.org/2000/svg";
+  function inkFor(el) {
+    const [r, g, b] = getComputedStyle(el).backgroundColor.match(/\d+/g).map(Number);
+    const lin = (c) => ((c /= 255) <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
+    const L = 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+    return 1.05 / (L + 0.05) >= (L + 0.05) / 0.05 ? "#ffffff" : "#0b0b0b";
+  }
+  function layout() {
+    for (const area of document.querySelectorAll(".bar-area")) {
+      const callouts = area.querySelector(".callouts");
+      callouts.replaceChildren();
+      const width = area.clientWidth;
+      const left0 = area.getBoundingClientRect().left;
+      const placed = [];
+      for (const seg of area.querySelectorAll(".seg")) {
+        const label = seg.querySelector(".in");
+        label.style.display = "";
+        label.style.visibility = "hidden";
+        if (label.scrollWidth + 8 <= seg.clientWidth) {
+          label.style.color = inkFor(seg);
+          label.style.visibility = "visible";
+          continue;
+        }
+        label.style.display = "none";
+        const box = seg.getBoundingClientRect();
+        const out = document.createElement("span");
+        out.className = "callout";
+        out.textContent = label.textContent;
+        callouts.append(out);
+        placed.push({ out, anchor: box.left + box.width / 2 - left0, w: out.offsetWidth });
+      }
+      if (!placed.length) { callouts.style.height = "0px"; continue; }
+      // Left to right: centre each label under its segment, pushed right past its neighbour;
+      // then right to left: pull back anything that runs off the end.
+      let edge = -Infinity;
+      for (const p of placed) { p.x = Math.max(p.anchor - p.w / 2, edge + GAP, 0); edge = p.x + p.w; }
+      edge = width + GAP;
+      for (const p of placed.reverse()) { p.x = Math.min(p.x, edge - GAP - p.w); edge = p.x; }
+      const svg = document.createElementNS(SVG, "svg");
+      svg.classList.add("leaders");
+      svg.setAttribute("width", width);
+      svg.setAttribute("height", DROP);
+      for (const p of placed) {
+        p.out.style.left = p.x + "px";
+        p.out.style.top = DROP + "px";
+        const line = document.createElementNS(SVG, "line");
+        line.setAttribute("x1", p.anchor); line.setAttribute("y1", 0);
+        line.setAttribute("x2", Math.min(Math.max(p.anchor, p.x + 2), p.x + p.w - 2)); line.setAttribute("y2", DROP);
+        svg.append(line);
+      }
+      callouts.append(svg);
+      callouts.style.height = DROP + ROW + "px";
+    }
+  }
+  const tip = document.getElementById("tip");
+  function show(seg, x, y) {
+    tip.textContent = seg.dataset.tip;
+    tip.hidden = false;
+    const w = tip.offsetWidth, h = tip.offsetHeight;
+    tip.style.left = Math.max(8, Math.min(x + 12, innerWidth - w - 8)) + "px";
+    tip.style.top = (y - h - 12 < 8 ? y + 16 : y - h - 12) + "px";
+  }
+  document.addEventListener("pointermove", (e) => {
+    const seg = e.target.closest(".seg");
+    if (seg) show(seg, e.clientX, e.clientY); else tip.hidden = true;
+  });
+  document.addEventListener("focusin", (e) => {
+    const seg = e.target.closest(".seg");
+    if (!seg) return;
+    const b = seg.getBoundingClientRect();
+    show(seg, b.left + b.width / 2, b.top);
+  });
+  document.addEventListener("focusout", () => (tip.hidden = true));
+  let pending;
+  addEventListener("resize", () => { cancelAnimationFrame(pending); pending = requestAnimationFrame(layout); });
+  layout();
+})();
+</script>
+</body>
+</html>

@@ -1,7 +1,10 @@
-# caliper-demo
+# caliper-audit
 
-A small streaming chat, built to be measured by [Caliper](https://github.com/Jia-A/caliper) and to show what it sees. Next.js App Router, plain JavaScript, no dependencies beyond Next.js, React and `caliper-timings`.
+Caliper's site, at https://caliper-audit.vercel.app: a landing page, and a small streaming chat built to be measured by [Caliper](https://github.com/Jia-A/caliper) and to show what it sees. Next.js App Router, plain JavaScript, no dependencies beyond Next.js, React and `caliper-timings`. The old address, `caliper-demo.vercel.app`, redirects here (307, set in Vercel's domain settings, not in code). Caliper never follows redirects, so `--server-timings` needs the new origin.
 
+- `/`: the landing page (`app/page.js`), static. Its commands and code are quoted from the caliper-ai and caliper-timings READMEs; change them there first.
+- `/demo`: the chat (`app/demo/page.js`).
+- `/report/quill.html`: a full Caliper report of Quill, from `public/report/`, with Quill's backend host masked as `quill-backend.example`. The screenshots in `public/shots/` come from it.
 - `POST /api/chat`: checks the input and the rate limits, sends the conversation to the model, and streams the reply back as plain text. The same `messages` array goes to the model and to `caliper-timings`' `run.prompt()`, which records sizes only, never text. The system prompt's two parts (`persona`, `rules`) are named and labelled `source: "app"`; each visitor message is a `visitor` part and each earlier reply an `earlier_reply` part, both labelled `"user"`: the browser sends the replies back, so only this visitor, directly or through the model's replies to them, could have put anything in them. Labels are recorded from caliper-timings 0.6.0 on; older versions ignore them.
 - `GET /__caliper/timings/:id`: Caliper's endpoint, from the folder `app/%5F_caliper/timings/[id]` (a `_` folder is private in the App Router; `%5F` is an encoded `_`). Without `CALIPER_TOKEN` it answers 404 like any unknown route.
 
@@ -40,7 +43,7 @@ MODEL_PROVIDER=fake CALIPER_TOKEN=local-demo-token npm run build && npm start
 Then measure it from Caliper's repo (`packages/cli`):
 
 ```sh
-CALIPER_TOKEN=local-demo-token node dist/cli.js audit http://localhost:3000/ \
+CALIPER_TOKEN=local-demo-token node dist/cli.js audit http://localhost:3000/demo \
   --input "#prompt" --prompt "What does Caliper measure?" --output "#reply" \
   --runs 2 --server-timings http://localhost:3000 --server-runs 1
 ```
@@ -63,4 +66,4 @@ CALIPER_TOKEN=local-demo-token node dist/cli.js audit http://localhost:3000/ \
 
 Each guard was checked by breaking it: a copy of the messages going to the model, limits failing open, no limit check, client system messages allowed.
 
-Checked by hand once, on 2026-11-13, with Next.js 16.2.6 locally and the fake model: `next build` lists `/__caliper/timings/[id]`, and the Caliper audit above timed both runs and showed the marked visit's spans, the prompt sizes and the two parts. Not yet on Vercel, with real Upstash, or with a real model.
+Checked by hand once, on 2026-11-13, with Next.js 16.2.6 locally and the fake model: `next build` lists `/__caliper/timings/[id]`, and the Caliper audit above timed both runs and showed the marked visit's spans, the prompt sizes and the two parts. On Vercel with the real model, also on 2026-11-13 (then at `caliper-demo.vercel.app`), an audit with `--runs 2 --server-runs 1` had its token accepted by the pre-check and read the marked visit back: the `limit` span, the model call and the prompt sizes with their sources. The chat was at `/` then; it's at `/demo` now.

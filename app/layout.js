@@ -1,6 +1,6 @@
 export const metadata = {
-  title: "Caliper demo",
-  description: "A small streaming chat, measured by Caliper.",
+  title: "Caliper",
+  description: "Measures what your AI interface makes users wait for.",
 };
 
 export default function RootLayout({ children }) {
